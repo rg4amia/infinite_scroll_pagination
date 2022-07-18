@@ -1,438 +1,297 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
 import 'package:infinite_scroll_pagination/src/ui/default_indicators/first_page_error_indicator.dart';
 import 'package:infinite_scroll_pagination/src/ui/default_indicators/first_page_progress_indicator.dart';
 import 'package:infinite_scroll_pagination/src/ui/default_indicators/new_page_error_indicator.dart';
 import 'package:infinite_scroll_pagination/src/ui/default_indicators/new_page_progress_indicator.dart';
 import 'package:infinite_scroll_pagination/src/ui/default_indicators/no_items_found_indicator.dart';
+import 'package:infinite_scroll_pagination/src/utils/listenable_listener.dart';
+import 'package:sliver_tools/sliver_tools.dart';
 
-import 'utils/paging_controller_utils.dart';
+typedef CompletedListingBuilder = Widget Function(
+  BuildContext context,
+  IndexedWidgetBuilder itemWidgetBuilder,
+  int itemCount,
+  WidgetBuilder? noMoreItemsIndicatorBuilder,
+);
 
-void main() {
-  group('PagingStatus.loadingFirstPage', () {
-    late PagingController pagingController;
-    setUp(() {
-      pagingController = PagingController(firstPageKey: 1);
-    });
+typedef ErrorListingBuilder = Widget Function(
+  BuildContext context,
+  IndexedWidgetBuilder itemWidgetBuilder,
+  int itemCount,
+  WidgetBuilder newPageErrorIndicatorBuilder,
+);
 
-    testWidgets(
-        'When no custom first page progress indicator is provided, '
-        'a FirstPageProgressIndicator widget is shown.', (tester) async {
-      // given
-      final builderDelegate = PagedChildBuilderDelegate<int>(
-        itemBuilder: (_, __, ___) => Container(),
-      );
+typedef LoadingListingBuilder = Widget Function(
+  BuildContext context,
+  IndexedWidgetBuilder itemWidgetBuilder,
+  int itemCount,
+  WidgetBuilder newPageProgressIndicatorBuilder,
+);
 
-      // when
-      await _pumpPagedSliverBuilder(
-        tester: tester,
-        pagingController: pagingController,
-        builderDelegate: builderDelegate,
-      );
+/// Assists the creation of infinitely scrolled paged sliver widgets.
+///
+/// Combines a [PagingController] with a
+/// [PagedChildBuilderDelegate] and calls the supplied
+/// [loadingListingBuilder], [errorListingBuilder] or
+/// [completedListingBuilder] for filling in the gaps.
+///
+/// For ordinary cases, this widget shouldn't be used directly. Instead, take a
+/// look at [PagedSliverList], [PagedSliverGrid],
+/// [PagedGridView] and [PagedListView].
+class PagedSliverBuilder<PageKeyType, ItemType> extends StatefulWidget {
+  const PagedSliverBuilder({
+    required this.pagingController,
+    required this.builderDelegate,
+    required this.loadingListingBuilder,
+    required this.errorListingBuilder,
+    required this.completedListingBuilder,
+    this.shrinkWrapFirstPageIndicators = false,
+    Key? key,
+  }) : super(key: key);
 
-      // then
-      _expectOneWidgetOfType(FirstPageProgressIndicator);
-    });
+  /// The controller for paged listings.
+  ///
+  /// Informs the current state of the pagination and requests new items from
+  /// its listeners.
+  final PagingController<PageKeyType, ItemType> pagingController;
 
-    testWidgets(
-        'Uses the custom first page progress indicator when one is provided.',
-        (tester) async {
-      // given
-      final customIndicatorKey = UniqueKey();
-      final builderDelegate = PagedChildBuilderDelegate<int>(
-        itemBuilder: (_, __, ___) => Container(),
-        firstPageProgressIndicatorBuilder: (context) => Container(
-          key: customIndicatorKey,
-        ),
-      );
+  /// The delegate for building the UI pieces of scrolling paged listings.
+  final PagedChildBuilderDelegate<ItemType> builderDelegate;
 
-      // when
-      await _pumpPagedSliverBuilder(
-        tester: tester,
-        pagingController: pagingController,
-        builderDelegate: builderDelegate,
-      );
+  /// The builder for an in-progress listing.
+  final LoadingListingBuilder loadingListingBuilder;
 
-      // then
-      _expectWidgetWithKey(customIndicatorKey);
-    });
-  });
+  /// The builder for an in-progress listing with a failed request.
+  final ErrorListingBuilder errorListingBuilder;
 
-  group('PagingStatus.firstPageError', () {
-    late PagingController pagingController;
+  /// The builder for a completed listing.
+  final CompletedListingBuilder completedListingBuilder;
 
-    setUp(() {
-      pagingController = buildPagingControllerWithPopulatedState(
-        PopulatedStateOption.errorOnFirstPage,
-      );
-    });
+  /// Whether the extent of the first page indicators should be determined by
+  /// the contents being viewed.
+  ///
+  /// If the paged sliver builder does not shrink wrap, then the first page
+  /// indicators will expand to the maximum allowed size. If the paged sliver
+  /// builder has unbounded constraints, then [shrinkWrapFirstPageIndicators]
+  /// must be true.
+  ///
+  /// Defaults to false.
+  final bool shrinkWrapFirstPageIndicators;
 
-    testWidgets(
-        'When no custom first page error indicator is provided, '
-        'a FirstPageErrorIndicator widget is shown.', (tester) async {
-      // given
-      final builderDelegate = PagedChildBuilderDelegate<int>(
-        itemBuilder: (_, __, ___) => Container(),
-      );
-
-      // when
-      await _pumpPagedSliverBuilder(
-        tester: tester,
-        pagingController: pagingController,
-        builderDelegate: builderDelegate,
-      );
-
-      // then
-      _expectOneWidgetOfType(FirstPageErrorIndicator);
-    });
-
-    testWidgets(
-        'Uses the custom first page error indicator when one is provided.',
-        (tester) async {
-      // given
-      final customIndicatorKey = UniqueKey();
-      final builderDelegate = PagedChildBuilderDelegate<int>(
-        itemBuilder: (_, __, ___) => Container(),
-        firstPageErrorIndicatorBuilder: (context) => Container(
-          key: customIndicatorKey,
-        ),
-      );
-
-      // when
-      await _pumpPagedSliverBuilder(
-        tester: tester,
-        pagingController: pagingController,
-        builderDelegate: builderDelegate,
-      );
-
-      // then
-      _expectWidgetWithKey(customIndicatorKey);
-    });
-  });
-
-  group('PagingStatus.noItemsFound', () {
-    late PagingController pagingController;
-    setUp(() {
-      pagingController = buildPagingControllerWithPopulatedState(
-        PopulatedStateOption.noItemsFound,
-      );
-    });
-
-    testWidgets(
-        'When no custom no items found indicator is provided, '
-        'a NoItemsFoundIndicator widget is shown.', (tester) async {
-      // given
-      final builderDelegate = PagedChildBuilderDelegate<int>(
-        itemBuilder: (_, __, ___) => Container(),
-      );
-
-      // when
-      await _pumpPagedSliverBuilder(
-        tester: tester,
-        pagingController: pagingController,
-        builderDelegate: builderDelegate,
-      );
-
-      // then
-      _expectOneWidgetOfType(NoItemsFoundIndicator);
-    });
-
-    testWidgets(
-        'Uses the custom no items found indicator when one is provided.',
-        (tester) async {
-      // given
-      final customIndicatorKey = UniqueKey();
-      final builderDelegate = PagedChildBuilderDelegate<int>(
-        itemBuilder: (_, __, ___) => Container(),
-        noItemsFoundIndicatorBuilder: (context) => Container(
-          key: customIndicatorKey,
-        ),
-      );
-
-      // when
-      await _pumpPagedSliverBuilder(
-        tester: tester,
-        pagingController: pagingController,
-        builderDelegate: builderDelegate,
-      );
-
-      // then
-      _expectWidgetWithKey(customIndicatorKey);
-    });
-  });
-
-  group('PagingStatus.subsequentPageError', () {
-    late PagingController pagingController;
-    setUp(() {
-      pagingController = buildPagingControllerWithPopulatedState(
-        PopulatedStateOption.errorOnSecondPage,
-      );
-    });
-
-    testWidgets(
-        'When no custom new page error indicator is provided, '
-        'a NewPageErrorIndicator widget is shown.', (tester) async {
-      // given
-      final builderDelegate = PagedChildBuilderDelegate<int>(
-        itemBuilder: (_, __, ___) => Container(),
-      );
-
-      // when
-      await _pumpPagedSliverBuilder(
-        tester: tester,
-        pagingController: pagingController,
-        builderDelegate: builderDelegate,
-      );
-
-      await tester.pump();
-
-      // then
-      _expectOneWidgetOfType(NewPageErrorIndicator);
-    });
-
-    testWidgets(
-        'Uses the custom new page error indicator when one is provided.',
-        (tester) async {
-      // given
-      final customIndicatorKey = UniqueKey();
-      final builderDelegate = PagedChildBuilderDelegate<int>(
-        itemBuilder: (_, __, ___) => Container(),
-        newPageErrorIndicatorBuilder: (context) => Text(
-          'Error',
-          key: customIndicatorKey,
-        ),
-      );
-
-      // when
-      await _pumpPagedSliverBuilder(
-        tester: tester,
-        pagingController: pagingController,
-        builderDelegate: builderDelegate,
-      );
-
-      await tester.pump();
-
-      // then
-      _expectWidgetWithKey(customIndicatorKey);
-    });
-  });
-
-  group('PagingStatus.ongoing', () {
-    late PagingController pagingController;
-    setUp(() {
-      pagingController = buildPagingControllerWithPopulatedState(
-        PopulatedStateOption.ongoingWithTwoPages,
-      );
-    });
-
-    testWidgets(
-        'When no custom new page progress indicator is provided, '
-        'a NewPageProgressIndicator widget is shown.', (tester) async {
-      // given
-      final builderDelegate = PagedChildBuilderDelegate<int>(
-        itemBuilder: (_, __, ___) => Container(),
-      );
-
-      // when
-      await _pumpPagedSliverBuilder(
-        tester: tester,
-        pagingController: pagingController,
-        builderDelegate: builderDelegate,
-      );
-
-      await tester.pump();
-
-      // then
-      _expectOneWidgetOfType(NewPageProgressIndicator);
-    });
-
-    testWidgets(
-        'Uses the custom new page progress indicator when one is provided.',
-        (tester) async {
-      // given
-      final customIndicatorKey = UniqueKey();
-      final builderDelegate = PagedChildBuilderDelegate<int>(
-        itemBuilder: (_, __, ___) => Container(),
-        newPageProgressIndicatorBuilder: (context) => CircularProgressIndicator(
-          key: customIndicatorKey,
-        ),
-      );
-
-      // when
-      await _pumpPagedSliverBuilder(
-        tester: tester,
-        pagingController: pagingController,
-        builderDelegate: builderDelegate,
-      );
-
-      await tester.pump();
-
-      // then
-      _expectWidgetWithKey(customIndicatorKey);
-    });
-  });
-
-  group('PagingStatus.completed', () {
-    late PagingController pagingController;
-    setUp(() {
-      pagingController = buildPagingControllerWithPopulatedState(
-        PopulatedStateOption.completedWithOnePage,
-      );
-    });
-
-    testWidgets('Uses the custom no more items indicator when one is provided.',
-        (tester) async {
-      // given
-      final customIndicatorKey = UniqueKey();
-      final builderDelegate = PagedChildBuilderDelegate<int>(
-        itemBuilder: (_, __, ___) => Container(),
-        noMoreItemsIndicatorBuilder: (context) => Text(
-          'No more items.',
-          key: customIndicatorKey,
-        ),
-      );
-
-      // when
-      await _pumpPagedSliverBuilder(
-        tester: tester,
-        pagingController: pagingController,
-        builderDelegate: builderDelegate,
-      );
-
-      await tester.pump();
-
-      // then
-      _expectWidgetWithKey(customIndicatorKey);
-    });
-  });
-
-  group('First page indicators\' height', () {
-    final pagingController = PagingController(firstPageKey: 1);
-    const indicatorHeight = 100.0;
-    late Key indicatorKey;
-    late Widget progressIndicator;
-    late PagedChildBuilderDelegate builderDelegate;
-    late Finder indicatorFinder;
-
-    setUp(() {
-      indicatorKey = UniqueKey();
-      progressIndicator = SizedBox(
-        height: indicatorHeight,
-        key: indicatorKey,
-      );
-      indicatorFinder = find.byKey(indicatorKey);
-
-      builderDelegate = PagedChildBuilderDelegate<int>(
-        itemBuilder: (_, __, ___) => Container(),
-        firstPageProgressIndicatorBuilder: (_) => progressIndicator,
-      );
-    });
-
-    testWidgets(
-        'By default, first page indicators are expanded to fill the '
-        'remaining space', (tester) async {
-      // when
-      await _pumpPagedSliverBuilder(
-        tester: tester,
-        pagingController: pagingController,
-        builderDelegate: builderDelegate,
-        shrinkWrapFirstPageIndicators: false,
-      );
-
-      // then
-      final indicatorSize = tester.getSize(indicatorFinder);
-      expect(indicatorSize.height, isNot(indicatorHeight));
-    });
-
-    testWidgets(
-        'Setting [shrinkWrapFirstPageIndicators] to true '
-        'preserves the indicator height', (tester) async {
-      // when
-      await _pumpPagedSliverBuilder(
-        tester: tester,
-        pagingController: pagingController,
-        builderDelegate: builderDelegate,
-        shrinkWrapFirstPageIndicators: true,
-      );
-
-      // then
-      final indicatorSize = tester.getSize(indicatorFinder);
-      expect(indicatorSize.height, indicatorHeight);
-    });
-  });
+  @override
+  _PagedSliverBuilderState<PageKeyType, ItemType> createState() =>
+      _PagedSliverBuilderState<PageKeyType, ItemType>();
 }
 
-void _expectWidgetWithKey(Key key) {
-  final finder = find.byKey(key);
-  expect(finder, findsOneWidget);
+class _PagedSliverBuilderState<PageKeyType, ItemType>
+    extends State<PagedSliverBuilder<PageKeyType, ItemType>> {
+  PagingController<PageKeyType, ItemType> get _pagingController =>
+      widget.pagingController;
+
+  PagedChildBuilderDelegate<ItemType> get _builderDelegate =>
+      widget.builderDelegate;
+
+  bool get _shrinkWrapFirstPageIndicators =>
+      widget.shrinkWrapFirstPageIndicators;
+
+  WidgetBuilder get _firstPageErrorIndicatorBuilder =>
+      _builderDelegate.firstPageErrorIndicatorBuilder ??
+      (_) => FirstPageErrorIndicator(
+            onTryAgain: _pagingController.retryLastFailedRequest,
+          );
+
+  WidgetBuilder get _newPageErrorIndicatorBuilder =>
+      _builderDelegate.newPageErrorIndicatorBuilder ??
+      (_) => NewPageErrorIndicator(
+            onTap: _pagingController.retryLastFailedRequest,
+          );
+
+  WidgetBuilder get _firstPageProgressIndicatorBuilder =>
+      _builderDelegate.firstPageProgressIndicatorBuilder ??
+      (_) => FirstPageProgressIndicator();
+
+  WidgetBuilder get _newPageProgressIndicatorBuilder =>
+      _builderDelegate.newPageProgressIndicatorBuilder ??
+      (_) => const NewPageProgressIndicator();
+
+  WidgetBuilder get _noItemsFoundIndicatorBuilder =>
+      _builderDelegate.noItemsFoundIndicatorBuilder ??
+      (_) => NoItemsFoundIndicator();
+
+  WidgetBuilder? get _noMoreItemsIndicatorBuilder =>
+      _builderDelegate.noMoreItemsIndicatorBuilder;
+
+  int get _invisibleItemsThreshold =>
+      _pagingController.invisibleItemsThreshold ?? 3;
+
+  int get _itemCount => _pagingController.itemCount;
+
+  bool get _hasNextPage => _pagingController.hasNextPage;
+
+  PageKeyType? get _nextKey => _pagingController.nextPageKey;
+
+  /// Avoids duplicate requests on rebuilds.
+  bool _hasRequestedNextPage = false;
+
+  @override
+  Widget build(BuildContext context) => ListenableListener(
+        listenable: _pagingController,
+        listener: () {
+          final status = _pagingController.value.status;
+
+          if (status == PagingStatus.loadingFirstPage) {
+            _pagingController.notifyPageRequestListeners(
+              _pagingController.firstPageKey,
+            );
+          }
+
+          if (status == PagingStatus.ongoing) {
+            _hasRequestedNextPage = false;
+          }
+        },
+        child: ValueListenableBuilder<PagingState<PageKeyType, ItemType>>(
+          valueListenable: _pagingController,
+          builder: (context, pagingState, _) {
+            Widget child;
+            final itemList = _pagingController.itemList;
+            switch (pagingState.status) {
+              case PagingStatus.ongoing:
+                child = widget.loadingListingBuilder(
+                  context,
+                  // We must create this closure to close over the [itemList]
+                  // value. That way, we are safe if [itemList] value changes
+                  // while Flutter rebuilds the widget (due to animations, for
+                  // example.)
+                  (context, index) => _buildListItemWidget(
+                    context,
+                    index,
+                    itemList!,
+                  ),
+                  _itemCount,
+                  _newPageProgressIndicatorBuilder,
+                );
+                break;
+              case PagingStatus.completed:
+                child = widget.completedListingBuilder(
+                  context,
+                  (context, index) => _buildListItemWidget(
+                    context,
+                    index,
+                    itemList!,
+                  ),
+                  _itemCount,
+                  _noMoreItemsIndicatorBuilder,
+                );
+                break;
+              case PagingStatus.loadingFirstPage:
+                child = _FirstPageStatusIndicatorBuilder(
+                  builder: _firstPageProgressIndicatorBuilder,
+                  shrinkWrap: _shrinkWrapFirstPageIndicators,
+                );
+                break;
+              case PagingStatus.subsequentPageError:
+                child = widget.errorListingBuilder(
+                  context,
+                  (context, index) => _buildListItemWidget(
+                    context,
+                    index,
+                    itemList!,
+                  ),
+                  _itemCount,
+                  (context) => _newPageErrorIndicatorBuilder(context),
+                );
+                break;
+              case PagingStatus.noItemsFound:
+                child = _FirstPageStatusIndicatorBuilder(
+                  builder: _noItemsFoundIndicatorBuilder,
+                  shrinkWrap: _shrinkWrapFirstPageIndicators,
+                );
+                break;
+              default:
+                child = _FirstPageStatusIndicatorBuilder(
+                  builder: _firstPageErrorIndicatorBuilder,
+                  shrinkWrap: _shrinkWrapFirstPageIndicators,
+                );
+            }
+
+            if (_builderDelegate.animateTransitions) {
+              return SliverAnimatedSwitcher(
+                duration: _builderDelegate.transitionDuration,
+                child: Container(
+                  // The `ObjectKey` makes it possible to differentiate
+                  // transitions between same Widget types, e.g., ongoing to
+                  // completed.
+                  key: ObjectKey(pagingState),
+                  child: child,
+                ),
+              );
+            } else {
+              return child;
+            }
+          },
+        ),
+      );
+
+  /// Connects the [_pagingController] with the [_builderDelegate] in order to
+  /// create a list item widget and request more items if needed.
+  Widget _buildListItemWidget(
+    BuildContext context,
+    int index,
+    List<ItemType> itemList,
+  ) {
+    if (!_hasRequestedNextPage) {
+      final newPageRequestTriggerIndex =
+          max(0, _itemCount - _invisibleItemsThreshold);
+
+      final isBuildingTriggerIndexItem = index == newPageRequestTriggerIndex;
+
+      if (_hasNextPage && isBuildingTriggerIndexItem) {
+        // Schedules the request for the end of this frame.
+        WidgetsBinding.instance!.addPostFrameCallback((_) {
+          _pagingController.notifyPageRequestListeners(_nextKey!);
+        });
+        _hasRequestedNextPage = true;
+      }
+    }
+
+    final item = itemList[index];
+    return _builderDelegate.itemBuilder(context, item, index);
+  }
 }
 
-void _expectOneWidgetOfType(Type type) {
-  final finder = find.byType(type);
-  expect(finder, findsOneWidget);
+extension on PagingController {
+  /// The loaded items count.
+  int get itemCount => itemList?.length ?? 0;
+
+  /// Tells whether there's a next page to request.
+  bool get hasNextPage => nextPageKey != null;
 }
 
-Future<void> _pumpPagedSliverBuilder({
-  required WidgetTester tester,
-  required PagingController pagingController,
-  required PagedChildBuilderDelegate builderDelegate,
-  bool shrinkWrapFirstPageIndicators = false,
-}) =>
-    _pumpSliver(
-      sliver: PagedSliverBuilder(
-        pagingController: pagingController,
-        builderDelegate: builderDelegate,
-        shrinkWrapFirstPageIndicators: shrinkWrapFirstPageIndicators,
-        errorListingBuilder: (
-          context,
-          __,
-          ___,
-          newPageErrorIndicatorBuilder,
-        ) =>
-            SliverToBoxAdapter(
-          child: newPageErrorIndicatorBuilder(
-            context,
-          ),
-        ),
-        loadingListingBuilder: (
-          context,
-          __,
-          ___,
-          newPageProgressIndicatorBuilder,
-        ) =>
-            SliverToBoxAdapter(
-          child: newPageProgressIndicatorBuilder(
-            context,
-          ),
-        ),
-        completedListingBuilder: (
-          context,
-          __,
-          ___,
-          noMoreItemsIndicatorBuilder,
-        ) =>
-            SliverToBoxAdapter(
-          child: noMoreItemsIndicatorBuilder?.call(
-            context,
-          ),
-        ),
-      ),
-      tester: tester,
-    );
+class _FirstPageStatusIndicatorBuilder extends StatelessWidget {
+  const _FirstPageStatusIndicatorBuilder({
+    required this.builder,
+    this.shrinkWrap = false,
+    Key? key,
+  }) : super(key: key);
 
-Future<void> _pumpSliver({
-  required Widget sliver,
-  required WidgetTester tester,
-}) =>
-    tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: CustomScrollView(
-            slivers: [
-              sliver,
-            ],
-          ),
-        ),
-      ),
-    );
+  final WidgetBuilder builder;
+  final bool shrinkWrap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (shrinkWrap) {
+      return SliverToBoxAdapter(
+        child: builder(context),
+      );
+    } else {
+      return SliverFillRemaining(
+        hasScrollBody: false,
+        child: builder(context),
+      );
+    }
+  }
+}
